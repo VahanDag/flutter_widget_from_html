@@ -49,6 +49,9 @@ class HtmlWidget extends StatefulWidget {
   /// The custom loading builder.
   final OnLoadingBuilder? onLoadingBuilder;
 
+  /// The callback when html converter done
+  final VoidCallback? onConverterDone;
+
   /// The callback when user taps an image.
   final void Function(ImageMetadata imageMetadata)? onTapImage;
 
@@ -93,23 +96,23 @@ class HtmlWidget extends StatefulWidget {
   /// Creates a widget that builds Flutter widget tree from html.
   ///
   /// The [html] argument must not be null.
-  const HtmlWidget(
-    this.html, {
-    this.baseUrl,
-    this.buildAsync,
-    this.customStylesBuilder,
-    this.customWidgetBuilder,
-    this.enableCaching,
-    this.factoryBuilder,
-    super.key,
-    this.onErrorBuilder,
-    this.onLoadingBuilder,
-    this.onTapImage,
-    this.onTapUrl,
-    List<dynamic>? rebuildTriggers,
-    this.renderMode = RenderMode.column,
-    this.textStyle,
-  }) : _rebuildTriggers = rebuildTriggers;
+  const HtmlWidget(this.html,
+      {this.baseUrl,
+      this.buildAsync,
+      this.customStylesBuilder,
+      this.customWidgetBuilder,
+      this.enableCaching,
+      this.factoryBuilder,
+      super.key,
+      this.onErrorBuilder,
+      this.onLoadingBuilder,
+      this.onTapImage,
+      this.onTapUrl,
+      List<dynamic>? rebuildTriggers,
+      this.renderMode = RenderMode.column,
+      this.textStyle,
+      this.onConverterDone})
+      : _rebuildTriggers = rebuildTriggers;
 
   @override
   State<HtmlWidget> createState() => HtmlWidgetState();
@@ -124,8 +127,7 @@ class HtmlWidgetState extends State<HtmlWidget> {
   Future<Widget>? _future;
   InheritedProperties? _rootProperties;
 
-  bool get buildAsync =>
-      widget.buildAsync ?? widget.html.length > kShouldBuildAsync;
+  bool get buildAsync => widget.buildAsync ?? widget.html.length > kShouldBuildAsync;
 
   bool get enableCaching => widget.enableCaching ?? !buildAsync;
 
@@ -234,7 +236,11 @@ class HtmlWidgetState extends State<HtmlWidget> {
     }
 
     Timeline.startSync('Build $widget (async)');
-    final built = _buildBody(this, domNodes);
+    final built = _buildBody(
+      this,
+      domNodes,
+      () => widget.onConverterDone?.call(),
+    );
     Timeline.finishSync();
 
     return built;
@@ -250,10 +256,13 @@ class HtmlWidgetState extends State<HtmlWidget> {
     Widget built;
     try {
       final domNodes = _parseHtml(widget.html);
-      built = _buildBody(this, domNodes);
+      built = _buildBody(
+        this,
+        domNodes,
+        () => widget.onConverterDone?.call(),
+      );
     } catch (error, stackTrace) {
-      built =
-          _wf.onErrorBuilder(context, _rootTree, error, stackTrace) ?? widget0;
+      built = _wf.onErrorBuilder(context, _rootTree, error, stackTrace) ?? widget0;
     }
 
     Timeline.finishSync();
@@ -261,18 +270,13 @@ class HtmlWidgetState extends State<HtmlWidget> {
     return built;
   }
 
-  Widget _sliverToBoxAdapterIfNeeded(Widget child) {
-    if (widget.renderMode != RenderMode.sliverList) {
-      return child;
-    }
+  Widget _sliverToBoxAdapterIfNeeded(Widget child) => widget.renderMode == RenderMode.sliverList
+      ? child == widget0
+          ? const SliverToBoxAdapter(child: widget0)
+          : SliverToBoxAdapter(child: child)
+      : child;
 
-    return child == widget0
-        ? const SliverToBoxAdapter(child: widget0)
-        : SliverToBoxAdapter(child: child);
-  }
-
-  Widget _wrapper(Widget child) =>
-      _RootWidget(resolved: _rootProperties, child: child);
+  Widget _wrapper(Widget child) => _RootWidget(resolved: _rootProperties, child: child);
 }
 
 class _RootResolvers extends InheritanceResolvers {
@@ -305,11 +309,10 @@ class _RootWidget extends InheritedWidget {
   });
 
   @override
-  bool updateShouldNotify(_RootWidget oldWidget) =>
-      resolved == null || resolved != oldWidget.resolved;
+  bool updateShouldNotify(_RootWidget oldWidget) => resolved == null || resolved != oldWidget.resolved;
 }
 
-Widget _buildBody(HtmlWidgetState state, dom.NodeList domNodes) {
+Widget _buildBody(HtmlWidgetState state, dom.NodeList domNodes, VoidCallback converterDone) {
   _logger.fine('Building body...');
   final wf = state._wf;
   wf.reset(state);
@@ -317,13 +320,11 @@ Widget _buildBody(HtmlWidgetState state, dom.NodeList domNodes) {
   final rootTree = state._rootTree;
   rootTree.addBitsFromNodes(domNodes);
 
-  final built =
-      rootTree.build()?.wrapWith(wf.buildBodyWidget) ?? state._sliverOrWidget0;
-
+  final built = rootTree.build()?.wrapWith(wf.buildBodyWidget) ?? state._sliverOrWidget0;
+  converterDone.call();
   _logger.fine('Built body successfuly.');
 
   return built;
 }
 
-dom.NodeList _parseHtml(String html) =>
-    parser.HtmlParser(html, parseMeta: false).parseFragment().nodes;
+dom.NodeList _parseHtml(String html) => parser.HtmlParser(html, parseMeta: false).parseFragment().nodes;
